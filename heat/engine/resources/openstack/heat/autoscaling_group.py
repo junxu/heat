@@ -19,6 +19,8 @@ from heat.engine import constraints
 from heat.engine import properties
 from heat.engine.resources.aws.autoscaling import autoscaling_group as aws_asg
 from heat.engine import rsrc_defn
+from heat.scaling import template
+from heat.engine import environment
 
 
 class AutoScalingResourceGroup(aws_asg.AutoScalingGroup):
@@ -67,6 +69,14 @@ class AutoScalingResourceGroup(aws_asg.AutoScalingGroup):
             required=True,
             update_allowed=True,
             constraints=[constraints.Range(min=0)]
+        ),
+        DELETE_POLICY: properties.Schema(
+            properties.Schema.STRING,
+            _('delete policy in the group.'),
+            required=False,
+            update_allowed=True,
+            constraints=[constraints.AllowedValues(['oldest_instance', 'newest_instance'])],
+            default='oldest_instance'
         ),
         COOLDOWN: properties.Schema(
             properties.Schema.INTEGER,
@@ -142,9 +152,22 @@ class AutoScalingResourceGroup(aws_asg.AutoScalingGroup):
                          template_version=('heat_template_version',
                                            '2013-05-23')):
         """Create a template in the HOT format for the nested stack."""
-        return super(AutoScalingResourceGroup,
-                     self)._create_template(num_instances, num_replace,
-                                            template_version=template_version)
+        instance_definition = self._get_instance_definition()
+        old_resources = self._get_instance_templates()
+        if self.properties[self.DELETE_POLICY] == 'newest_instance':
+            old_resources.reverse()
+        definitions = template.resource_templates(
+            old_resources, instance_definition, num_instances, num_replace)
+
+        child_env = environment.get_child_environment(
+            self.stack.env,
+            self.child_params(), item_to_remove=self.resource_info)
+
+        return template.make_template(definitions, version=template_version,
+                                      child_env=child_env)
+        #return super(AutoScalingResourceGroup,
+        #             self)._create_template(num_instances, num_replace,
+        #                                    template_version=template_version)
 
     def FnGetAtt(self, key, *path):
         if key == self.CURRENT_SIZE:
